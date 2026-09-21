@@ -5,16 +5,17 @@ from .semantic import SemanticMemory
 
 
 class EpisodicMemory(BaseMemory):
-    """Stores task episodes and retrieves similar past experiences."""
+    """Stores concrete past experiences and retrieves similar episodes."""
 
     name = "episodic"
 
     def __init__(self) -> None:
         self.backend = SemanticMemory()
 
-    def add(self, item: MemoryItem) -> None:
-        if item.kind == "episode":
-            self.backend.add(item)
+    def add(self, item: MemoryItem) -> bool:
+        if item.kind != "episode":
+            return False
+        return self.backend.add(item)
 
     def retrieve(self, query: str, top_k: int = 3) -> list[MemoryItem]:
         return self.backend.retrieve(query, top_k=top_k)
