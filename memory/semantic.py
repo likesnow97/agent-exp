@@ -24,19 +24,16 @@ def _cosine(a: Counter[str], b: Counter[str]) -> float:
 
 
 class SemanticMemory(BaseMemory):
-    """Local lexical vector retrieval.
-
-    This intentionally avoids an embedding model so the memory mechanism is
-    easy to inspect. It can later be replaced by a real embedding backend.
-    """
+    """Simple local vector-like retrieval without external embedding models."""
 
     name = "semantic"
 
     def __init__(self) -> None:
         self.items: list[MemoryItem] = []
 
-    def add(self, item: MemoryItem) -> None:
+    def add(self, item: MemoryItem) -> bool:
         self.items.append(item)
+        return True
 
     def retrieve(self, query: str, top_k: int = 3) -> list[MemoryItem]:
         query_vec = Counter(_tokens(query))
