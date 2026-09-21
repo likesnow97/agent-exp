@@ -13,12 +13,14 @@ class LLMClient:
         self.client = OpenAI(
             base_url=settings.base_url,
             api_key=settings.api_key,
+            timeout=settings.timeout,
         )
 
     def chat(self, *, system_prompt: str, user_prompt: str) -> str:
         response = self.client.chat.completions.create(
             model=self.settings.model,
             temperature=self.settings.temperature,
+            max_tokens=self.settings.max_tokens,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
