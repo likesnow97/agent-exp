@@ -16,7 +16,8 @@ class BaseMemory(ABC):
     name = "base"
 
     @abstractmethod
-    def add(self, item: MemoryItem) -> None:
+    def add(self, item: MemoryItem) -> bool:
+        """Store an item and return whether this memory accepted it."""
         raise NotImplementedError
 
     @abstractmethod
