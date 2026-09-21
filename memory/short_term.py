@@ -11,8 +11,9 @@ class ShortTermMemory(BaseMemory):
     def __init__(self, max_items: int = 6) -> None:
         self.items: deque[MemoryItem] = deque(maxlen=max_items)
 
-    def add(self, item: MemoryItem) -> None:
+    def add(self, item: MemoryItem) -> bool:
         self.items.append(item)
+        return True
 
     def retrieve(self, query: str, top_k: int = 3) -> list[MemoryItem]:
         items = list(self.items)
