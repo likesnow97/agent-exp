@@ -17,6 +17,7 @@ class AgentResult:
     query: str
     retrieved_memory: list[MemoryItem]
     answer: str
+    interaction_written: bool
 
 
 class MemoryAgent:
@@ -25,23 +26,20 @@ class MemoryAgent:
         self.memory = memory
         self.top_k = top_k
 
-    def seed_memory(self, items: list[MemoryItem]) -> None:
-        for item in items:
-            self.memory.add(item)
+    def seed_memory(self, items: list[MemoryItem]) -> list[tuple[MemoryItem, bool]]:
+        return [(item, self.memory.add(item)) for item in items]
 
-    def _format_memory(self, items: list[MemoryItem]) -> str:
+    @staticmethod
+    def _format_memory(items: list[MemoryItem]) -> str:
         if not items:
             return "(no relevant memory)"
-        return "\n".join(
-            f"- [{item.kind}] {item.text}"
-            for item in items
-        )
+        return "\n".join(f"- [{item.kind}] {item.text}" for item in items)
 
     def run(self, query: str) -> AgentResult:
-        # 1) Retrieve memory relevant to the current query.
+        # 1) Read: retrieve memory relevant to the current query.
         retrieved = self.memory.retrieve(query, top_k=self.top_k)
 
-        # 2) Inject retrieved memory into the LLM prompt.
+        # 2) Use: inject retrieved memory into the LLM prompt.
         prompt = f"""Current task:
 {query}
 
@@ -51,15 +49,15 @@ Retrieved memory:
 Answer the current task concisely.
 """
 
-        # 3) Ask the LLM to make the decision / produce the answer.
+        # 3) Think/answer: call the same LLM for every memory condition.
         answer = self.llm.chat(
             system_prompt=SYSTEM_PROMPT,
             user_prompt=prompt,
         )
 
-        # 4) Store the completed interaction as a generic memory item.
-        # Memory implementations decide whether they actually keep it.
-        self.memory.add(
+        # 4) Write: propose the completed interaction as new memory.
+        # Each memory implementation decides whether this type should be stored.
+        written = self.memory.add(
             MemoryItem(
                 text=f"Task: {query}\nAnswer: {answer}",
                 kind="interaction",
@@ -70,4 +68,5 @@ Answer the current task concisely.
             query=query,
             retrieved_memory=retrieved,
             answer=answer,
+            interaction_written=written,
         )
