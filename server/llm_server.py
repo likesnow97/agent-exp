@@ -9,6 +9,11 @@ def main() -> None:
         description="Start a local vLLM OpenAI-compatible server."
     )
     parser.add_argument("--model", required=True, help="Model name or local model path.")
+    parser.add_argument(
+        "--served-model-name",
+        default="agent-model",
+        help="Model name exposed by the OpenAI-compatible API.",
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--api-key", default="change-me")
@@ -20,6 +25,8 @@ def main() -> None:
         "vllm",
         "serve",
         args.model,
+        "--served-model-name",
+        args.served_model_name,
         "--host",
         args.host,
         "--port",
