@@ -1,0 +1,18 @@
+[project]
+name = "agent-exp"
+version = "0.1.0"
+description = "Minimal experiments for comparing memory types in LLM agents."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "openai>=1.50.0",
+  "python-dotenv>=1.0.1",
+]
+
+[project.optional-dependencies]
+server = [
+  "vllm>=0.10.0",
+]
+
+[tool.uv]
+package = false
