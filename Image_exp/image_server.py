@@ -1,97 +1,135 @@
 from __future__ import annotations
 
-import argparse
+import os
 import subprocess
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Start Qwen-Image-2.1 with vLLM-Omni."
-    )
+# ============================================================
+# 配置区
+# ============================================================
+#
+# 以后通常只需要修改这里，不需要在命令行传一大堆参数。
 
-    # 与之前 memory_exp/server/llm_server.py 保持相同风格：
-    # --model 可以填写 Hugging Face 模型名，也可以填写本地模型目录。
-    parser.add_argument(
-        "--model",
-        required=True,
-        help="Model name or local model path.",
-    )
+# Qwen-Image-2.1 本地模型路径
+MODEL_PATH = "../../modlib/model/Qwen/Qwen-Image-2.1/"
 
-    parser.add_argument(
-        "--served-model-name",
-        default="qwen-image-2.1",
-        help="Model name exposed by the API.",
-    )
+# 对外暴露给 API 的模型名称
+SERVED_MODEL_NAME = "qwen-image-2.1"
 
-    parser.add_argument(
-        "--host",
-        default="127.0.0.1",
-    )
+# 指定使用哪张物理 GPU。
+#
+# 例如：
+#   "0"   -> 只使用 GPU 0
+#   "1"   -> 只使用 GPU 1
+#   "0,1" -> 让进程看到 GPU 0 和 GPU 1
+#
+# 注意：
+# CUDA_VISIBLE_DEVICES="1" 后，
+# vLLM 内部看到的这张卡会变成 cuda:0。
+GPU_DEVICES = "1"
 
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=8091,
-    )
+# API 服务地址
+HOST = "127.0.0.1"
+PORT = 8091
 
-    parser.add_argument(
-        "--api-key",
-        default="change-me",
-    )
+# API Key。
+# 如果只在本机测试，可以先使用这个简单值。
+API_KEY = "change-me"
 
-    # 这两个参数默认不启用。
-    # 需要时再传给 vLLM-Omni，避免第一轮实验引入额外配置。
-    parser.add_argument(
-        "--step-execution",
-        action="store_true",
-        help="Enable vLLM-Omni step execution mode.",
-    )
+# vLLM-Omni 可选配置。
+# 第一轮实验先保持关闭，避免引入额外变量。
+STEP_EXECUTION = False
+MAX_NUM_SEQS: int | None = None
 
-    parser.add_argument(
-        "--max-num-seqs",
-        type=int,
-        default=None,
-        help="Optional maximum number of concurrent sequences.",
-    )
 
-    args = parser.parse_args()
+def build_command() -> list[str]:
+    """
+    构造最终执行的 vLLM 命令。
 
-    # Qwen-Image-2.1 是 diffusion 图像生成模型，
-    # 因此需要 --omni 启用 vLLM-Omni 模式。
+    返回值类似：
+
+    [
+        "vllm",
+        "serve",
+        ".../Qwen-Image-2.1/",
+        "--omni",
+        ...
+    ]
+    """
+
     command = [
         "vllm",
         "serve",
-        args.model,
+        MODEL_PATH,
         "--omni",
         "--served-model-name",
-        args.served_model_name,
+        SERVED_MODEL_NAME,
         "--host",
-        args.host,
+        HOST,
         "--port",
-        str(args.port),
+        str(PORT),
         "--api-key",
-        args.api_key,
+        API_KEY,
     ]
 
-    if args.step_execution:
+    if STEP_EXECUTION:
         command.append("--step-execution")
 
-    if args.max_num_seqs is not None:
+    if MAX_NUM_SEQS is not None:
         command.extend(
             [
                 "--max-num-seqs",
-                str(args.max_num_seqs),
+                str(MAX_NUM_SEQS),
             ]
         )
 
-    print("Starting:", " ".join(command))
+    return command
 
+
+def main() -> None:
+    # os.environ 是当前 Python 进程的环境变量。
+    #
+    # copy()：
+    # 复制一份环境变量给 vLLM 子进程，
+    # 避免直接修改当前 Python 进程本身的环境。
+    env = os.environ.copy()
+
+    # 这一行等价于在终端执行：
+    #
+    # CUDA_VISIBLE_DEVICES=1 vllm serve ...
+    #
+    # vLLM 因此只能看到 GPU_DEVICES 指定的显卡。
+    env["CUDA_VISIBLE_DEVICES"] = GPU_DEVICES
+
+    command = build_command()
+
+    print("=" * 60)
+    print("Qwen-Image-2.1 vLLM-Omni server")
+    print("=" * 60)
+    print(f"Model:       {MODEL_PATH}")
+    print(f"GPU:         {GPU_DEVICES}")
+    print(f"Model name:  {SERVED_MODEL_NAME}")
+    print(f"API:         http://{HOST}:{PORT}")
+    print("=" * 60)
+
+    print("\nStarting:")
+    print(" ".join(command))
+    print()
+
+    # subprocess.run()：
+    # 从当前 Python 程序启动另一个进程。
+    #
+    # env=env：
+    # 把上面设置好的 CUDA_VISIBLE_DEVICES
+    # 一并传给 vLLM。
+    #
     # check=True：
-    # 如果 vllm serve 启动失败，Python 会抛出异常，
-    # 而不是静默结束。
+    # 如果 vLLM 启动失败，会立即抛出异常，
+    # 方便我们看到真实错误。
     subprocess.run(
         command,
         check=True,
+        env=env,
     )
 
 
