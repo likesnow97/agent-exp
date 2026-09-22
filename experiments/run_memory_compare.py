@@ -9,17 +9,11 @@ import json
 # Path：更方便地处理文件夹和文件路径
 from pathlib import Path
 
-# Callable：这里只用于类型标注，表示“一个可以被调用的对象”
+# Callable：类型标注，表示“可以被调用的对象”
 from typing import Callable
 
-# LLMClient：负责调用你自己部署的 OpenAI-compatible / vLLM API
-# MemoryAgent：真正执行“检索记忆 -> 调用 LLM -> 写入记忆”的 Agent
 from agent import LLMClient, MemoryAgent
-
-# Settings：从 .env 中读取模型 API 地址、Key、模型名等配置
 from config import Settings
-
-# 导入不同类型的 Memory
 from memory import (
     BaseMemory,
     EpisodicMemory,
@@ -28,31 +22,37 @@ from memory import (
     ShortTermMemory,
     SkillMemory,
 )
-
-# CASES：预先定义好的实验任务
-# ExperimentCase：单个实验任务的数据结构
 from experiments.tasks import CASES, ExperimentCase
 
 
-# 定义一种类型：
-# MemoryFactory 表示“调用后会创建一个 BaseMemory 对象的函数/类”
+# Callable[[], BaseMemory] 可以拆开理解：
 #
-# 例如：
-# NoMemory() -> NoMemory 对象
-# SemanticMemory() -> SemanticMemory 对象
+# Callable[参数列表, 返回类型]
+#
+# [] 表示“不需要参数”
+# BaseMemory 表示“返回一个 BaseMemory 对象”
+#
+# 因此 MemoryFactory 表示：
+# “一个不需要参数、调用后能创建 Memory 的东西”。
+#
+# Python 中“类本身”也是可调用对象，例如：
+# NoMemory()
 MemoryFactory = Callable[[], BaseMemory]
 
 
-# 把命令行中的 memory 名称映射到具体 Memory 实现。
-#
-# 这样执行：
-#   python -m experiments.run_memory_compare --memory semantic
-#
-# 就能通过 "semantic" 找到 SemanticMemory。
+# dict[str, MemoryFactory]：
+# key 是 str，value 是 MemoryFactory。
 MEMORY_FACTORIES: dict[str, MemoryFactory] = {
     "no_memory": NoMemory,
 
-    # lambda 的作用是创建 ShortTermMemory 时顺便指定最多保存 6 条记忆
+    # lambda 是匿名函数。
+    #
+    # 下面等价于：
+    #
+    # def create_short_term():
+    #     return ShortTermMemory(max_items=6)
+    #
+    # 使用 lambda 是为了让所有 value 都保持“调用后创建 Memory”的形式。
     "short_term": lambda: ShortTermMemory(max_items=6),
 
     "semantic": SemanticMemory,
@@ -65,17 +65,20 @@ def parse_args() -> argparse.Namespace:
     """读取命令行参数。"""
 
     parser = argparse.ArgumentParser(
-        description="Compare how the same LLM agent behaves with different memory modules."
+        description=(
+            "Compare how the same LLM agent behaves "
+            "with different memory modules."
+        )
     )
 
-    # --memory 用来指定运行哪一种 Memory。
+    # MEMORY_FACTORIES.keys()
+    # 得到所有 dict key。
     #
-    # 例如：
-    #   --memory no_memory
-    #   --memory short_term
-    #   --memory semantic
+    # 前面的 * 是“可迭代对象解包”：
     #
-    # 默认 all，表示全部运行。
+    # ["all", *["a", "b"]]
+    # 等价于：
+    # ["all", "a", "b"]
     parser.add_argument(
         "--memory",
         choices=["all", *MEMORY_FACTORIES.keys()],
@@ -83,15 +86,17 @@ def parse_args() -> argparse.Namespace:
         help="Run one memory type or all memory types.",
     )
 
-    # --case 用来指定运行哪一个实验任务。
+    # *(case.name for case in CASES)
     #
-    # 例如：
-    #   --case reusable_skill
-    #
-    # 默认 all，表示全部 case 都运行。
+    # (case.name for case in CASES)
+    # 是生成器表达式；
+    # 前面的 * 再把它展开到 list 中。
     parser.add_argument(
         "--case",
-        choices=["all", *(case.name for case in CASES)],
+        choices=[
+            "all",
+            *(case.name for case in CASES),
+        ],
         default="all",
         help="Run one experiment case or all cases.",
     )
@@ -99,137 +104,133 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def selected_memories(name: str) -> list[tuple[str, MemoryFactory]]:
-    """根据命令行参数决定本次实验要运行哪些 Memory。"""
+def selected_memories(
+    name: str,
+) -> list[tuple[str, MemoryFactory]]:
+    """根据命令行参数决定运行哪些 Memory。"""
 
-    # 如果用户没有指定某一种，就返回全部 Memory
+    # 返回类型：
+    # list[tuple[str, MemoryFactory]]
+    #
+    # 即：
+    # [
+    #   ("no_memory", NoMemory),
+    #   ("semantic", SemanticMemory),
+    #   ...
+    # ]
+
     if name == "all":
+        # dict.items() 返回 (key, value)。
+        # list(...) 把它转换成普通 list。
         return list(MEMORY_FACTORIES.items())
 
-    # 否则只返回用户指定的那一种
-    return [(name, MEMORY_FACTORIES[name])]
+    # MEMORY_FACTORIES[name]：
+    # 使用 key 从 dict 中取出对应的 value。
+    return [
+        (name, MEMORY_FACTORIES[name])
+    ]
 
 
 def selected_cases(name: str) -> list[ExperimentCase]:
-    """根据命令行参数决定本次实验要运行哪些任务。"""
+    """根据命令行参数决定运行哪些实验任务。"""
 
-    # all：运行 tasks.py 中定义的所有 CASES
     if name == "all":
         return CASES
 
-    # 否则只保留名称匹配的那个 case
-    return [case for case in CASES if case.name == name]
+    # 这是“带过滤条件的列表推导式”：
+    #
+    # [表达式 for 元素 in 列表 if 条件]
+    #
+    # 等价于：
+    #
+    # result = []
+    # for case in CASES:
+    #     if case.name == name:
+    #         result.append(case)
+    # return result
+    return [
+        case
+        for case in CASES
+        if case.name == name
+    ]
 
 
 def main() -> None:
-    # ---------------------------------------------------------
-    # 1. 初始化实验
-    # ---------------------------------------------------------
-
-    # 读取 --memory、--case 等命令行参数
+    # 1. 读取命令行参数
     args = parse_args()
 
-    # 从 .env 读取：
-    # LLM_BASE_URL
-    # LLM_API_KEY
-    # LLM_MODEL
-    # temperature 等配置
+    # 2. 从 .env 创建配置对象
     settings = Settings.from_env()
 
-    # 创建 LLM 客户端。
-    # 后续 Agent 就通过这个对象向 vLLM API 发送请求。
+    # 3. 创建调用 vLLM 的客户端
     llm = LLMClient(settings)
 
-    # 确保 results/ 文件夹存在
+    # Path("results") 创建一个 Path 对象，
+    # 不是立即创建文件夹。
     results_dir = Path("results")
+
+    # exist_ok=True：
+    # 如果 results 已经存在，不报错。
     results_dir.mkdir(exist_ok=True)
 
-    # 所有实验结果最终都会先收集到这个列表中，
-    # 最后统一保存到 JSON 文件。
+    # list[dict]：
+    # 这是一个列表，其中每个元素都是 dict。
     all_results: list[dict] = []
 
-    # ---------------------------------------------------------
-    # 2. 遍历需要测试的 Memory
-    # ---------------------------------------------------------
-
-    # memory_name：
-    #   "no_memory" / "short_term" / "semantic" ...
+    # selected_memories(...) 中每个元素都是二元组：
+    # (memory_name, factory)
     #
-    # factory：
-    #   一个可以创建对应 Memory 对象的函数或类
-    for memory_name, factory in selected_memories(args.memory):
+    # for memory_name, factory in ...
+    # 属于“元组解包”。
+    for memory_name, factory in selected_memories(
+        args.memory
+    ):
         print(f"\n=== Memory: {memory_name} ===")
 
-        # -----------------------------------------------------
-        # 3. 对当前 Memory 运行所有指定的实验任务
-        # -----------------------------------------------------
-
         for case in selected_cases(args.case):
-
-            # 每个 case 都重新创建一个干净的 Memory。
-            # 这样不同 case 之间不会互相污染记忆。
+            # factory 是可调用对象。
+            #
+            # 可能是：
+            # NoMemory
+            # SemanticMemory
+            # 或 lambda
+            #
+            # 统一使用 factory() 创建 Memory 实例。
             memory = factory()
 
-            # 创建 Agent。
-            #
-            # top_k=3 表示：
-            # 每次最多从 Memory 中取 3 条相关记忆给 LLM。
             agent = MemoryAgent(
                 llm=llm,
                 memory=memory,
                 top_k=3,
             )
 
-            # -------------------------------------------------
-            # 4. 先给 Agent 写入实验预设的 Memory
-            # -------------------------------------------------
+            # 先写入实验预设记忆。
+            #
+            # 返回值类似：
+            # [
+            #   (MemoryItem(...), True),
+            #   (MemoryItem(...), False),
+            # ]
+            seed_results = agent.seed_memory(
+                case.seed_memory
+            )
 
-            # case.seed_memory 来自 experiments/tasks.py。
-            #
-            # 例如 semantic_fact 会提前提供：
-            # "The project API runs on port 8765."
-            #
-            # seed_results 会记录：
-            #   这条记忆是否被当前 Memory 接受。
-            #
-            # NoMemory：
-            #   accepted=False
-            #
-            # SemanticMemory：
-            #   accepted=True
-            seed_results = agent.seed_memory(case.seed_memory)
-
-            # -------------------------------------------------
-            # 5. 正式让 Agent 处理问题
-            # -------------------------------------------------
-
-            # agent.run() 内部会做：
-            #
-            # query
-            #   ↓
-            # memory.retrieve()
-            #   ↓
-            # 把检索到的 Memory 放进 Prompt
-            #   ↓
-            # 调用 LLM
-            #   ↓
-            # 得到 answer
-            #   ↓
-            # 尝试把本次 interaction 再写入 Memory
+            # 正式执行一次 Agent。
             result = agent.run(case.query)
 
-            # -------------------------------------------------
-            # 6. 整理本次实验结果
-            # -------------------------------------------------
-
+            # dict 使用：
+            # {
+            #     "key": value,
+            # }
             row = {
-                # 使用了哪种 Memory
                 "memory": memory_name,
-
-                # 当前 case 名称
                 "case": case.name,
 
-                # 初始化时，每条 seed memory 是否成功写入
+                # 这里是列表推导式。
+                #
+                # for item, accepted in seed_results
+                # 同样属于元组解包：
+                # 每次把二元组拆成两个变量。
                 "seed_writes": [
                     {
                         "kind": item.kind,
@@ -239,10 +240,8 @@ def main() -> None:
                     for item, accepted in seed_results
                 ],
 
-                # Agent 收到的问题
                 "query": result.query,
 
-                # Agent 在回答之前真正检索出来的 Memory
                 "retrieved_memory": [
                     {
                         "kind": item.kind,
@@ -251,35 +250,31 @@ def main() -> None:
                     for item in result.retrieved_memory
                 ],
 
-                # LLM 最终回答
                 "answer": result.answer,
-
-                # 回答完成以后，
-                # 当前 Memory 是否接受了这次新的 interaction
-                "interaction_written": result.interaction_written,
+                "interaction_written": (
+                    result.interaction_written
+                ),
             }
 
-            # 把本次结果放进总结果列表
             all_results.append(row)
 
-            # -------------------------------------------------
-            # 7. 把关键过程打印到终端，方便直接观察
-            # -------------------------------------------------
-
             print(f"\nCase: {case.name}")
-
-            # 查看预设 Memory 有没有真正写进去
             print("Seed writes:")
+
+            # row["seed_writes"]：
+            # 通过 key 从 dict 中取 value。
             for item in row["seed_writes"]:
+                # item 本身也是 dict，
+                # 所以继续用 item["accepted"] 等方式访问。
                 print(
                     f"  - accepted={item['accepted']} "
                     f"[{item['kind']}] {item['text']}"
                 )
 
-            # 查看 Agent 回答当前问题时，
-            # 到底从 Memory 中取出了哪些内容
             print("Retrieved:")
 
+            # 非空 list 在 if 中为 True，
+            # 空 list 为 False。
             if row["retrieved_memory"]:
                 for item in row["retrieved_memory"]:
                     print(
@@ -289,26 +284,30 @@ def main() -> None:
             else:
                 print("  (none)")
 
-            # LLM 最终回答
             print(f"Answer: {result.answer}")
 
-            # 查看本轮 interaction 是否被继续存入 Memory
             print(
                 "Interaction stored after answer: "
                 f"{result.interaction_written}"
             )
 
-    # ---------------------------------------------------------
-    # 8. 保存所有实验结果
-    # ---------------------------------------------------------
+    # Path 对象支持 "/" 运算符拼接路径。
+    #
+    # Path("results") / "memory_compare.json"
+    # 得到：
+    # results/memory_compare.json
+    output_path = (
+        results_dir / "memory_compare.json"
+    )
 
-    output_path = results_dir / "memory_compare.json"
-
+    # json.dumps(...)：
+    # Python 对象 -> JSON 字符串。
+    #
     # ensure_ascii=False：
-    # 如果以后结果里包含中文，不会被转成 \uXXXX。
+    # 中文保持原样。
     #
     # indent=2：
-    # 让 JSON 更容易人工阅读。
+    # 使用 2 个空格缩进，方便阅读。
     output_path.write_text(
         json.dumps(
             all_results,
@@ -321,10 +320,10 @@ def main() -> None:
     print(f"\nSaved results to {output_path}")
 
 
-# 只有直接运行当前模块时才执行 main()。
+# Python 文件被直接运行时：
+# __name__ == "__main__"
 #
-# python -m experiments.run_memory_compare
-#           ↓
-#         main()
+# 如果只是被其他文件 import，
+# 这里就不会执行。
 if __name__ == "__main__":
     main()
