@@ -10,13 +10,19 @@ import requests
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Interactively generate images with a Qwen-Image-2.1 vLLM-Omni server."
+        description=(
+            "Interactively generate images with a "
+            "Qwen-Image-2.1 vLLM-Omni server."
+        )
     )
 
     parser.add_argument(
         "--base-url",
         default="http://127.0.0.1:8091",
-        help="vLLM-Omni server address.",
+        help=(
+            "Server address. Both http://host:port "
+            "and http://host:port/v1 are accepted."
+        ),
     )
 
     parser.add_argument(
@@ -67,6 +73,17 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def build_endpoint(base_url: str) -> str:
+    """Build /v1/images/generations from either base URL style."""
+
+    base_url = base_url.rstrip("/")
+
+    if base_url.endswith("/v1"):
+        return base_url + "/images/generations"
+
+    return base_url + "/v1/images/generations"
+
+
 def generate_image(
     *,
     base_url: str,
@@ -78,12 +95,9 @@ def generate_image(
     seed: int,
     timeout: float,
 ) -> bytes:
-    """Call /v1/images/generations and return PNG bytes."""
+    """Call the image generation API and return PNG bytes."""
 
-    endpoint = (
-        base_url.rstrip("/")
-        + "/v1/images/generations"
-    )
+    endpoint = build_endpoint(base_url)
 
     headers = {
         "Content-Type": "application/json",
@@ -107,14 +121,12 @@ def generate_image(
         timeout=timeout,
     )
 
-    # 如果服务器返回 4xx / 5xx，
-    # 这里会直接抛出异常并打印服务端错误。
-    response.raise_for_status()
+    if not response.ok:
+        raise RuntimeError(
+            f"HTTP {response.status_code}: {response.text}"
+        )
 
     data = response.json()
-
-    # vLLM-Omni 的 OpenAI-compatible 图像接口
-    # 会把图片放在 data[0]["b64_json"] 中。
     image_b64 = data["data"][0]["b64_json"]
 
     return base64.b64decode(image_b64)
@@ -170,8 +182,8 @@ def main() -> None:
             print("Exit.")
             break
 
-        # 每次生成自动把 seed +1。
-        # 这样连续输入相同 prompt 时也能得到不同结果。
+        # 每成功生成一次，seed 自动 +1。
+        # 因此连续输入同一 prompt 时也能得到不同结果。
         current_seed = args.seed + index - 1
 
         print(
@@ -208,18 +220,15 @@ def main() -> None:
 
             index += 1
 
-        except requests.RequestException as exc:
-            print(
-                f"Request failed: {exc}\n"
-            )
         except (
+            requests.RequestException,
+            RuntimeError,
             KeyError,
             ValueError,
             TypeError,
         ) as exc:
             print(
-                "Unexpected API response: "
-                f"{exc}\n"
+                f"Generation failed: {exc}\n"
             )
 
 
